@@ -1,5 +1,4 @@
 PROJECT_DIR := $(shell pwd)
-CC = gcc
 PROM = recovery
 OBJ = recovery.o \
 	default_recovery_ui.o \
@@ -35,7 +34,7 @@ CFLAGS ?= -I$(PROJECT_DIR) -I/usr/include/libdrm/ -lc
 ifdef RecoveryNoUi
 CFLAGS += -lpthread
 else
-CFLAGS += -lz -lpng -ldrm
+CFLAGS += -lz -lpng -ldrm -lpthread
 endif
 
 $(PROM): $(OBJ)

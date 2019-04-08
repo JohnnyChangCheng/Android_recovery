@@ -189,7 +189,7 @@ Volume* volume_for_path(const char* path) {
 		int len = strlen(v->mount_point);
 		if (strncmp(path, v->mount_point, len) == 0 &&
 			(path[len] == '\0' || path[len] == '/')) {
-			printf(" ===path = %s, v-mount_point = %s ===\n",path, v->mount_point);
+			//printf(" ===path = %s, v-mount_point = %s ===\n",path, v->mount_point);
 			return v;
 		} else {
 			//add by chad.ma for symbol link file. eg. sdcard/ --->mnt/sdcard
@@ -391,6 +391,14 @@ int format_volume(const char* volume) {
 		int result = make_vfat(v->device, 0, v->mount_point);
 		if (result != 0) {
 			LOGE("format_volume: make_vfat failed on %s\n", v->device);
+			return -1;
+		}
+		return 0;
+	}
+	if (strcmp(v->fs_type, "ntfs") == 0) {
+		int result = make_ntfs(v->device, 0, v->mount_point);
+		if (result != 0) {
+			LOGE("format_volume: make_ntfs failed on %s\n", v->device);
 			return -1;
 		}
 		return 0;

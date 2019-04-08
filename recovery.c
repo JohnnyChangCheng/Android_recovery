@@ -145,7 +145,32 @@ static const int MAX_ARG_LENGTH = 4096;
 static const int MAX_ARGS = 100;
 extern size_t strlcpy(char *dst, const char *src, size_t dsize);
 extern size_t strlcat(char *dst, const char *src, size_t dsize);
+int check_dirfiles(const char* dir ,const char * file,char* filename){
+        int ret=0;
+        struct dirent *pDirent;
+        DIR *pDir;
 
+        if (!dir || !file) {
+            printf ("Usage: testprog <dirname>\n");
+            return -1;
+        }
+        pDir = opendir (dir);
+        if (pDir == NULL) {
+            printf ("Cannot open directory '%s'\n",dir);
+            return -1;
+        }
+
+        while ((pDirent = readdir(pDir)) != NULL) {
+           if(!strncmp( pDirent->d_name,file,strlen(file)-1)) {
+               memcpy(filename, pDirent->d_name,strlen(pDirent->d_name));
+               filename[strlen(pDirent->d_name)]='\0';
+               ret=1;
+               break;
+           }
+        }
+        closedir (pDir);
+        return ret;
+}
 
 int read_encrypted_fs_info(encrypted_fs_info *encrypted_fs_data) {
     return ENCRYPTED_FS_ERROR;
@@ -185,34 +210,54 @@ check_and_fclose(FILE *fp, const char *name) {
 static void
 get_args(int *argc, char ***argv) {
     struct bootloader_message boot;
+    char filename[256]={0};
     memset(&boot, 0, sizeof(boot));
     get_bootloader_message(&boot);  // this may fail, leaving a zeroed structure
+    if(check_dirfiles("/media/usb0","atgame_backup.img",filename)> 0){
+        char cmd[512]={0};
+        sprintf(cmd,"--update_package=/media/usb0/%s",filename);
+         *argv = (char **) malloc(sizeof(char *) * MAX_ARGS);
+        (*argv)[0] = strdup("recovery");
+        (*argv)[1] = strdup(cmd);
+        *argc=2;
+        printf("what is %d argv %s =================================\n", 0,(*argv)[0]);
+        printf("here the argc %d\n",*argc);
+        goto final;
+    }
 
     if (boot.command[0] != 0 && boot.command[0] != 255) {
-        LOGI("Boot command: %.*s\n", sizeof(boot.command), boot.command);
+        printf("ATGAME Boot command: %.*s\n", sizeof(boot.command), boot.command);
     }
 
     if (boot.status[0] != 0 && boot.status[0] != 255) {
-        LOGI("Boot status: %.*s\n", sizeof(boot.status), boot.status);
+        printf("ATGAME Boot status: %.*s\n", sizeof(boot.status), boot.status);
     }
+     printf("==============================================================================================\n");
 
     // --- if arguments weren't supplied, look in the bootloader control block
+
     if (*argc <= 1) {
         boot.recovery[sizeof(boot.recovery) - 1] = '\0';  // Ensure termination
+        printf("what is boot.recovery %s =================================\n",boot.recovery);
         const char *arg = strtok(boot.recovery, "\n");
+        printf("what is arg %s =================================\n",arg);
         if (arg != NULL && !strcmp(arg, "recovery")) {
             *argv = (char **) malloc(sizeof(char *) * MAX_ARGS);
             (*argv)[0] = strdup(arg);
             for (*argc = 1; *argc < MAX_ARGS; ++*argc) {
                 if ((arg = strtok(NULL, "\n")) == NULL) break;
                 (*argv)[*argc] = strdup(arg);
+                 printf("what is %d argv %s =================================\n", *argc,(*argv)[*argc]);
             }
             LOGI("Got arguments from boot message\n");
         } else if (boot.recovery[0] != 0 && boot.recovery[0] != 255) {
             LOGE("Bad boot message\n\"%.20s\"\n", boot.recovery);
+        }else{
+            printf("Cannot get argument!!%d!!!!\n",__LINE__);
         }
     }
-
+    
+    
     // --- if that doesn't work, try the command file
     if (*argc <= 1) {
         FILE *fp = fopen_path(COMMAND_FILE, "r");
@@ -228,12 +273,14 @@ get_args(int *argc, char ***argv) {
             }
 
             check_and_fclose(fp, COMMAND_FILE);
-            LOGI("Got arguments from %s\n", COMMAND_FILE);
+            printf("Got arguments from %s\n", COMMAND_FILE);
         }
     }
+  
 
     // --> write the arguments we have back into the bootloader control block
     // always boot into recovery after this (until finish_recovery() is called)
+final:
     strlcpy(boot.command, "boot-recovery", sizeof(boot.command));
     strlcpy(boot.recovery, "recovery\n", sizeof(boot.recovery));
     int i;
