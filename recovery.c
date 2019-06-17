@@ -220,8 +220,6 @@ get_args(int *argc, char ***argv) {
         (*argv)[0] = strdup("recovery");
         (*argv)[1] = strdup(cmd);
         *argc=2;
-        printf("what is %d argv %s =================================\n", 0,(*argv)[0]);
-        printf("here the argc %d\n",*argc);
         goto final;
     }
 
@@ -247,7 +245,6 @@ get_args(int *argc, char ***argv) {
             for (*argc = 1; *argc < MAX_ARGS; ++*argc) {
                 if ((arg = strtok(NULL, "\n")) == NULL) break;
                 (*argv)[*argc] = strdup(arg);
-                 printf("what is %d argv %s =================================\n", *argc,(*argv)[*argc]);
             }
             LOGI("Got arguments from boot message\n");
         } else if (boot.recovery[0] != 0 && boot.recovery[0] != 255) {
@@ -284,11 +281,12 @@ final:
     strlcpy(boot.command, "boot-recovery", sizeof(boot.command));
     strlcpy(boot.recovery, "recovery\n", sizeof(boot.recovery));
     int i;
+    printf("argc %d \n",*argc);
     for (i = 1; i < *argc; ++i) {
         strlcat(boot.recovery, (*argv)[i], sizeof(boot.recovery));
         strlcat(boot.recovery, "\n", sizeof(boot.recovery));
     }
-    set_bootloader_message(&boot);
+   // set_bootloader_message(&boot);
 }
 
 static void
@@ -709,7 +707,6 @@ prompt_and_wait() {
         ui_reset_progress();
 
         int chosen_item = get_menu_selection(headers, MENU_ITEMS, 0, 0);
-
         // device-specific code may take some action here.  It may
         // return one of the core actions handled in the switch
         // statement below.
@@ -852,45 +849,7 @@ main(int argc, char **argv) {
 
     int status = INSTALL_SUCCESS;
 
-    if (toggle_secure_fs) {
-        if (strcmp(encrypted_fs_mode,"on") == 0) {
-            encrypted_fs_data.mode = MODE_ENCRYPTED_FS_ENABLED;
-            ui_print("Enabling Encrypted FS.\n");
-        } else if (strcmp(encrypted_fs_mode,"off") == 0) {
-            encrypted_fs_data.mode = MODE_ENCRYPTED_FS_DISABLED;
-            ui_print("Disabling Encrypted FS.\n");
-        } else {
-            ui_print("Error: invalid Encrypted FS setting.\n");
-            status = INSTALL_ERROR;
-        }
-
-        // Recovery strategy: if the data partition is damaged, disable encrypted file systems.
-        // This preventsthe device recycling endlessly in recovery mode.
-        if ((encrypted_fs_data.mode == MODE_ENCRYPTED_FS_ENABLED) &&
-                (read_encrypted_fs_info(&encrypted_fs_data))) {
-            ui_print("Encrypted FS change aborted, resetting to disabled state.\n");
-            encrypted_fs_data.mode = MODE_ENCRYPTED_FS_DISABLED;
-        }
-
-        if (status != INSTALL_ERROR) {
-            if (erase_volume("/userdata")) {
-                ui_print("Data wipe failed.\n");
-                status = INSTALL_ERROR;
-#if 0
-            } else if (erase_volume("/cache")) {
-                ui_print("Cache wipe failed.\n");
-                status = INSTALL_ERROR;
-#endif
-            } else if ((encrypted_fs_data.mode == MODE_ENCRYPTED_FS_ENABLED) &&
-                      (restore_encrypted_fs_info(&encrypted_fs_data))) {
-                ui_print("Encrypted FS change aborted.\n");
-                status = INSTALL_ERROR;
-            } else {
-                ui_print("Successfully updated Encrypted FS.\n");
-                status = INSTALL_SUCCESS;
-            }
-        }
-    } else if (update_package != NULL) {
+    if (update_package != NULL) {
         int fd = -1;
         char* resutl_file = "/userdata/update_rst.txt";
         char text[128] ;
@@ -918,6 +877,7 @@ main(int argc, char **argv) {
         }
         if(ret == 0) {
             printf(">>>rkflash will update from %s\n", update_package);
+            char* squash_firmare = getenv("FIRMWARE_PATH");
             status = do_rk_update(binary, update_package);
             if(status == INSTALL_SUCCESS){
                 strcpy(systemFlag, update_package);
@@ -925,16 +885,26 @@ main(int argc, char **argv) {
                 if(strncmp(update_package,"/userdata", 9) != 0) {
                     if (resize_volume("/userdata"))
                         LOGE("\n ---resize_volume userdata error ---\n");
-                } else {
-                    //update success, delete userdata/update.img and write result to file.
-                    if(access(update_package, F_OK) == 0)
-                        remove(update_package);
-                }
+                } 
                 strlcpy(text, "update images success!", 127);
-	        } else {
+                system("umount /upgrade/upgrade");
+                system("rm -rf /upgrade/*.img");
+                system("sync");
+	        } else if (status == INSTALL_MD5ERROR){
+                struct bootloader_message boot;
+                memset(&boot, 0, sizeof(boot));
+                set_bootloader_message(&boot);
+                system("umount /upgrade/upgrade");
+                system("rm -rf /upgrade/*.img");
+                system("sync");
+            }else {
+                status = INSTALL_ERROR;
                 strlcpy(text, "update images failed!", 127);
             }
+            
         } else {
+            ui_show_text(0);     
+            status = INSTALL_NOFIRMWARE;      
             strlcpy(text, "update images failed!", 127);
         }
 
@@ -947,63 +917,29 @@ main(int argc, char **argv) {
         if (status != INSTALL_SUCCESS) ui_print("Installation aborted.\n");
         ui_print("update.img Installation done.\n");
         ui_show_text(0);
-    }else if (sdupdate_package != NULL) {
-        // update image from sdcard
-        const char* binary = "/usr/bin/rkupdate";
-        printf(">>>sdboot update will update from %s\n", sdupdate_package);
-        status = do_rk_update(binary, sdupdate_package);
-        if(status == INSTALL_SUCCESS){
-            printf("update.img Installation success.\n");
-            ui_print("update.img Installation success.\n");
-            ui_show_text(0);
-        }
-
-    } else if (wipe_data) {
-        if (device_wipe_data()) status = INSTALL_ERROR;
-        if (erase_volume("/userdata")) status = INSTALL_ERROR;
-        if (status != INSTALL_SUCCESS) ui_print("Data wipe failed.\n");
-    } else if (wipe_all) {
-        if (device_wipe_data()) status = INSTALL_ERROR;
-        if (erase_volume("/userdata")) status = INSTALL_ERROR;
-        if (status != INSTALL_SUCCESS) ui_print("Data wipe failed.\n");
-		ui_print("Data wipe done.\n");
-        if (access("/dev/block/by-name/oem", F_OK) == 0) {
-            if (resize_volume("/oem")) status = INSTALL_ERROR;
-            if (status != INSTALL_SUCCESS) ui_print("resize failed.\n");
-        }
-
-		ui_print("resize oem done.\n");
-		ui_show_text(0);
     } else {
-        status = INSTALL_ERROR;  // No command specified
+        ui_show_text(0);
+        status = INSTALL_NOFIRMWARE;
+         // No command specified
     }
-
-    if (status != INSTALL_SUCCESS) ui_set_background(BACKGROUND_ICON_ERROR);
+    switch(status)
+    {
+        case INSTALL_SUCCESS:
+            break;
+        case INSTALL_NOFIRMWARE: 
+            ui_set_background(BACKGROUND_ICON_NOFIRMWARE);
+            break;
+        case INSTALL_MD5ERROR:
+            ui_set_background(BACKGROUND_ICON_CHECKMD5ERROR);
+            break;
+        default:
+            ui_set_background(BACKGROUND_ICON_ERROR);
+            break;
+    }
     if (status != INSTALL_SUCCESS || ui_text_visible()) {
         prompt_and_wait();
     }
 
-    if (sdupdate_package != NULL && bSDBootUpdate) {
-        if (status == INSTALL_SUCCESS){
-            int timeout = 60;
-            char imageFile[64] = {0};
-            strlcpy(imageFile, EX_SDCARD_ROOT, sizeof(imageFile));
-            strlcat(imageFile, "/sdupdate.img", sizeof(imageFile));
-
-            printf("Please remove SD CARD!!!, wait for reboot.\n");
-            ui_print("Please remove SD CARD!!!, wait for reboot.");
-
-            while (timeout--) {
-                sleep(1);
-                if (access(imageFile, F_OK) == 0) {
-                    ui_print("Please remove SD CARD!!!, wait for reboot");
-                } else {
-                    break;
-                }
-            }
-            //ui_show_text(0);
-        }
-    }
 
     // Otherwise, get ready to boot the main system...
     finish_recovery(send_intent);

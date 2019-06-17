@@ -75,7 +75,7 @@ int do_rk_update(const char *binary, const char *path){
     waitpid(pid, &status, 0);
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         LOGE("Error in %s\n(Status %d)\n", path, WEXITSTATUS(status));
-        return INSTALL_ERROR;
+        return WEXITSTATUS(status);
     }
     return INSTALL_SUCCESS;
 }

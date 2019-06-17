@@ -19,7 +19,7 @@
 
 #include "common.h"
 
-enum { INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT };
+enum { INSTALL_SUCCESS, INSTALL_ERROR, INSTALL_CORRUPT, INSTALL_MD5ERROR = 5, INSTALL_NOFIRMWARE };
 int install_package(const char *root_path);
 int do_rk_update(const char *binary, const char *path);
 
