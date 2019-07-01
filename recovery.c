@@ -32,7 +32,8 @@
 
 #include "bootloader.h"
 #include "common.h"
-//#include "cutils/properties.h"
+#include "libcryptsetup.h"
+#include "openssl/md5.h"
 #include "install.h"
 #include "minui/minui.h"
 #include "minzip/DirUtil.h"
@@ -45,10 +46,12 @@
 static const struct option OPTIONS[] = {
   { "send_intent", required_argument, NULL, 's' },
   { "update_package", required_argument, NULL, 'u' },
+  { "erase_factory", no_argument, NULL, 'r' },
   { "wipe_data", no_argument, NULL, 'w' },
   { "wipe_all", no_argument, NULL, 'a' },
   { "set_encrypted_filesystems", required_argument, NULL, 'e' },
   { "show_text", no_argument, NULL, 't' },
+  { "atg_update", required_argument, NULL, 'd' },
   { NULL, 0, NULL, 0 },
 };
 
@@ -145,32 +148,6 @@ static const int MAX_ARG_LENGTH = 4096;
 static const int MAX_ARGS = 100;
 extern size_t strlcpy(char *dst, const char *src, size_t dsize);
 extern size_t strlcat(char *dst, const char *src, size_t dsize);
-int check_dirfiles(const char* dir ,const char * file,char* filename){
-        int ret=0;
-        struct dirent *pDirent;
-        DIR *pDir;
-
-        if (!dir || !file) {
-            printf ("Usage: testprog <dirname>\n");
-            return -1;
-        }
-        pDir = opendir (dir);
-        if (pDir == NULL) {
-            printf ("Cannot open directory '%s'\n",dir);
-            return -1;
-        }
-
-        while ((pDirent = readdir(pDir)) != NULL) {
-           if(!strncmp( pDirent->d_name,file,strlen(file)-1)) {
-               memcpy(filename, pDirent->d_name,strlen(pDirent->d_name));
-               filename[strlen(pDirent->d_name)]='\0';
-               ret=1;
-               break;
-           }
-        }
-        closedir (pDir);
-        return ret;
-}
 
 int read_encrypted_fs_info(encrypted_fs_info *encrypted_fs_data) {
     return ENCRYPTED_FS_ERROR;
@@ -213,15 +190,6 @@ get_args(int *argc, char ***argv) {
     char filename[256]={0};
     memset(&boot, 0, sizeof(boot));
     get_bootloader_message(&boot);  // this may fail, leaving a zeroed structure
-    if(check_dirfiles("/media/usb0","atgame_backup.img",filename)> 0){
-        char cmd[512]={0};
-        sprintf(cmd,"--update_package=/media/usb0/%s",filename);
-         *argv = (char **) malloc(sizeof(char *) * MAX_ARGS);
-        (*argv)[0] = strdup("recovery");
-        (*argv)[1] = strdup(cmd);
-        *argc=2;
-        goto final;
-    }
 
     if (boot.command[0] != 0 && boot.command[0] != 255) {
         printf("ATGAME Boot command: %.*s\n", sizeof(boot.command), boot.command);
@@ -277,7 +245,6 @@ get_args(int *argc, char ***argv) {
 
     // --> write the arguments we have back into the bootloader control block
     // always boot into recovery after this (until finish_recovery() is called)
-final:
     strlcpy(boot.command, "boot-recovery", sizeof(boot.command));
     strlcpy(boot.recovery, "recovery\n", sizeof(boot.recovery));
     int i;
@@ -507,9 +474,9 @@ get_menu_selection(char** headers, char** items, int menu_only,
         int key = ui_wait_key();
         int visible = ui_text_visible();
 
-        int action = device_handle_key(key, visible);
+        int action = device_handle_key(key, 1);
 
-        if (action < 0) {
+         if (action < 0) {
             switch (action) {
                 case HIGHLIGHT_UP:
                     --selected;
@@ -521,6 +488,9 @@ get_menu_selection(char** headers, char** items, int menu_only,
                     break;
                 case SELECT_ITEM:
                     chosen_item = selected;
+                    break;
+                case REBOOT_CMD:
+                    chosen_item = 0;
                     break;
                 case NO_ACTION:
                     break;
@@ -745,7 +715,107 @@ prompt_and_wait() {
         }
     }
 }
+static int 
+compare_md5_last32bytes_are_md5(char *filename)
+{
+        FILE *inFile = fopen(filename, "r");
+        unsigned char md5_char[MD5_DIGEST_LENGTH];
+        int res = 0;
+        char *md5_char_hex = (char *)calloc(sizeof(char), MD5_DIGEST_LENGTH * 2 + 1);
+        MD5_CTX mdContext;
+        int bytes, remain_byte;
+        long file_size = 0 , iterator_size = 0;
+        char cmd[256] = {0};
+        unsigned char data[1024] ={0} , md5[128] = {0};
+        if (inFile == NULL)
+        {
+                printf("%s can't be opened.\n", filename);
+                return -1;
+        }
+        MD5_Init(&mdContext);
+        fseek(inFile, 0L, SEEK_END);
+        file_size = ftell(inFile);
+        rewind(inFile);
+        while ((bytes = fread(data, 1, 1024, inFile)) != 0)
+        {
+                if(bytes != 1024)
+                {
+                        MD5_Final(md5_char, &mdContext);
+                }
+                else    MD5_Update(&mdContext, data, bytes);
+        }
+        
+       // MD5_Final(md5_char, &mdContext);
+        for (int i = 0; i < MD5_DIGEST_LENGTH; i++)
+        {
+                remain_byte = (MD5_DIGEST_LENGTH - i) * 2 + 1;
+                snprintf(md5_char_hex + 2 * i, remain_byte, "%02x", md5_char[i]);
+        }
+        printf("file size %lu \n",file_size);
+        fseek(inFile,-32,SEEK_END);
+        bytes = fread(md5, 1, 32, inFile);
+        fclose(inFile);
+        printf("%s  and %s \n",md5 ,md5_char_hex);
+        if (strncmp(md5, md5_char_hex, MD5_DIGEST_LENGTH * 2) == 0)
+        {
+                printf("pass md5 \n");
+                res = 0;
+        }
+        else
+                res = -1;
+        free(md5_char_hex);
+        return res;
+}
+static int 
+activate_and_check_status(const char *path, const char *device_name)
+{
+        struct crypt_device *cd;
+        struct crypt_active_device cad;
+        int r;
 
+        r = crypt_init(&cd, path);
+        if (r < 0 ) {
+                printf("crypt_init() failed for %s.\n", path);
+                return r;
+        }
+
+        r = crypt_load(cd,              /* crypt context */
+                       CRYPT_LUKS1,     /* requested type */
+                       NULL);           /* additional parameters (not used) */
+        if (r < 0) {
+                printf("crypt_load() failed on device %s.\n", crypt_get_device_name(cd));
+                crypt_free(cd);
+                return r;
+        }
+        
+        r = crypt_activate_by_passphrase(cd,            /* crypt context */
+                                         device_name,   /* device name to activate */
+                                         CRYPT_ANY_SLOT,/* which slot use (ANY - try all) */
+                                         "123456", 6,      /* passphrase */
+                                         CRYPT_ACTIVATE_READONLY); /* flags */
+        if (r < 0) {
+                printf("Device %s activation failed.\n", device_name);
+                crypt_free(cd);
+                return r;
+        }
+       
+        r = crypt_get_active_device(cd, device_name, &cad);
+        if (r < 0) {
+                printf("Get info about active device %s failed.\n", device_name);
+                crypt_deactivate(cd, device_name);
+                crypt_free(cd);
+                return r;
+        }
+        printf("Active device parameters for %s:\n"
+                "\tDevice offset (in sectors): %" PRIu64 "\n"
+                "\tIV offset (in sectors)    : %" PRIu64 "\n"
+                "\tdevice size (in sectors)  : %" PRIu64 "\n"
+                "\tread-only flag            : %s\n",
+                device_name, cad.offset, cad.iv_offset, cad.size,
+                cad.flags & CRYPT_ACTIVATE_READONLY ? "1" : "0");
+        crypt_free(cd);
+        return 0;
+}
 static void
 print_property(const char *key, const char *name, void *cookie) {
     printf("%s=%s\n", key, name);
@@ -802,7 +872,7 @@ main(int argc, char **argv) {
     int wipe_all = 0;
     int toggle_secure_fs = 0;
     encrypted_fs_info encrypted_fs_data;
-
+    int erase_factory = 0;
     strcpy(systemFlag, "false");
     int arg;
     while ((arg = getopt_long(argc, argv, "", OPTIONS, NULL)) != -1) {
@@ -814,12 +884,17 @@ main(int argc, char **argv) {
         case 'a': wipe_all = 1; break;
         case 'e': encrypted_fs_mode = optarg; toggle_secure_fs = 1; break;
         case 't': ui_show_text(1); break;
+        case 'r': erase_factory=1;break;
+        case 'd':
         case '?':
             LOGE("Invalid command argument\n");
             continue;
         }
     }
-
+    if(erase_factory == 1)
+    {
+        printf("factory!!!!!!!!!\n");
+    }
     device_recovery_start();
 
     printf("Command:");
@@ -939,7 +1014,16 @@ main(int argc, char **argv) {
     if (status != INSTALL_SUCCESS || ui_text_visible()) {
         prompt_and_wait();
     }
-
+    if(erase_factory == 1)
+    {
+        struct bootloader_message boot_blank;
+        memset(&boot_blank, 0, sizeof(boot_blank));
+        Volume* v = volume_for_path("/misc");
+        FILE* f = fopen(v->device, "wb");
+        fseek(f, BOOTLOADER_MESSAGE_OFFSET_IN_MISC+BOOTLOADER_MESSAGE_OFFSET_IN_MISC, SEEK_SET);
+        int count = fwrite(&boot_blank, sizeof(boot_blank), 1, f);
+        fclose(f);
+    }
 
     // Otherwise, get ready to boot the main system...
     finish_recovery(send_intent);

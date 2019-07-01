@@ -34,7 +34,7 @@ CFLAGS ?= -I$(PROJECT_DIR) -I/usr/include/libdrm/ -lc
 ifdef RecoveryNoUi
 CFLAGS += -lpthread
 else
-CFLAGS += -lz -lpng -ldrm -lpthread
+CFLAGS += -lz -lpng -ldrm -lpthread -lcryptsetup
 endif
 
 $(PROM): $(OBJ)

@@ -54,6 +54,9 @@ int device_handle_key(int key_code, int visible) {
             case KEY_ENTER:
             case KEY_MENU:
                 return SELECT_ITEM;
+            case BTN_B:
+                return REBOOT_CMD;
+                
         }
     }
 

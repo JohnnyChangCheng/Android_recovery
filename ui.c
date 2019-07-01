@@ -29,8 +29,8 @@
 #include "minui/minui.h"
 #include "recovery_ui.h"
 
-#define MAX_COLS 96
-#define MAX_ROWS 32
+#define MAX_COLS 128
+#define MAX_ROWS 64
 
 #define CHAR_WIDTH 10
 #define CHAR_HEIGHT 18
@@ -279,7 +279,7 @@ static int input_callback(int fd, short revents, void *data)
         rel_sum = 0;
     }
 
-    if (ev.type != EV_KEY || ev.code > KEY_MAX)
+    if (ev.type != EV_KEY || ev.code > KEY_MAX )
         return 0;
 
     pthread_mutex_lock(&key_queue_mutex);
@@ -422,6 +422,9 @@ void ui_print(const char *fmt, ...)
 
     // This can get called before ui_init(), so be careful.
     pthread_mutex_lock(&gUpdateMutex);
+    text_row=35;
+    text_col=87;
+    memset(text[text_row],' ',text_col);
     if (text_rows > 0 && text_cols > 0) {
         char *ptr;
         for (ptr = buf; *ptr != '\0'; ++ptr) {
